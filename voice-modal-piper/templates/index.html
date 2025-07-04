@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Realtime TTS</title>
+  </head>
+  <body>
+    <h2>Realtime Text to Speech</h2>
+    <form id="ttsForm">
+      <textarea
+        name="text"
+        rows="5"
+        cols="60"
+        placeholder="Enter text here..."
+      ></textarea
+      ><br /><br />
+      <button type="submit">Speak</button>
+    </form>
+    <br />
+    <audio id="audioPlayer" controls></audio>
+
+    <script>
+      document
+        .getElementById("ttsForm")
+        .addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const form = e.target;
+          const formData = new FormData(form);
+
+          const response = await fetch("/tts", {
+            method: "POST",
+            body: formData,
+          });
+
+          const blob = await response.blob();
+          const audio = document.getElementById("audioPlayer");
+          audio.src = URL.createObjectURL(blob);
+          // audio.play();
+        });
+    </script>
+  </body>
+</html>
