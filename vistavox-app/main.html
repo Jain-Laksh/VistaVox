@@ -1,0 +1,309 @@
+<!-- const VISION_API = "http://127.0.0.1:8080/v1/chat/completions"; // Replace with your vision API
+const TTS_API = "http://127.0.0.1:8000/tts"; // Replace with your TTS API -->
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Blind Assistant</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 20px;
+        background: #f5f5f5;
+        text-align: center;
+      }
+      video {
+        width: 320px;
+        height: 240px;
+        background: black;
+        border: 2px solid #444;
+        border-radius: 8px;
+      }
+      textarea,
+      input {
+        width: 90%;
+        max-width: 480px;
+        margin-top: 10px;
+        font-size: 16px;
+        padding: 8px;
+      }
+      .controls {
+        margin-top: 15px;
+      }
+      button {
+        padding: 10px 20px;
+        font-size: 16px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        color: white;
+      }
+      .start {
+        background: #28a745;
+      }
+      .stop {
+        background: #dc3545;
+      }
+      #statusMessage {
+        margin-top: 10px;
+        font-size: 18px;
+        font-weight: bold;
+        color: #333;
+      }
+      .api-inputs {
+        margin-top: 30px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        width: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>VistaVox</h2>
+    <h3>Painting Pictures With Words for Those Who Cannot See.</h3>
+
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas" style="display: none"></canvas>
+
+    <textarea id="instructionText">
+Describe the image vividly in present continuous tense, using rich adjectives and sensory details. Write like a story.
+    </textarea>
+    <textarea
+      id="responseText"
+      readonly
+      placeholder="Response will appear here..."
+      rows="6"
+    ></textarea>
+
+    <div id="statusMessage">Status: Not started</div>
+
+    <div class="controls">
+      <button id="startButton" class="start">Start</button>
+    </div>
+
+    <!-- API inputs moved here -->
+    <div class="api-inputs">
+      <input
+        id="visionApiUrl"
+        placeholder="Enter Vision API URL"
+        value="http://127.0.0.1:8080/v1/chat/completions"
+      />
+      <input
+        id="ttsApiUrl"
+        placeholder="Enter TTS API URL"
+        value="http://127.0.0.1:8060/tts"
+      />
+    </div>
+
+    <audio id="audioPlayer" style="display: none"></audio>
+
+    <script>
+      const video = document.getElementById("video");
+      const canvas = document.getElementById("canvas");
+      const instructionText = document.getElementById("instructionText");
+      const responseText = document.getElementById("responseText");
+      const startButton = document.getElementById("startButton");
+      const audioPlayer = document.getElementById("audioPlayer");
+      const statusMessage = document.getElementById("statusMessage");
+      const visionApiInput = document.getElementById("visionApiUrl");
+      const ttsApiInput = document.getElementById("ttsApiUrl");
+
+      let stream = null;
+      let isRunning = false;
+
+      function updateStatus(msg) {
+        statusMessage.textContent = msg;
+      }
+
+      async function initCamera() {
+        try {
+          // Try to use the back (environment) camera
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: { exact: "environment" } },
+            });
+          } catch (err) {
+            console.warn(
+              "Back camera failed, using front instead:",
+              err.message
+            );
+            // Fallback to default (usually front) camera
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: true,
+            });
+          }
+
+          video.srcObject = stream;
+          updateStatus("Camera ready.");
+        } catch (err) {
+          alert("Failed to access camera: " + err.message);
+          updateStatus("Camera error.");
+        }
+      }
+
+      function captureImageBase64() {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext("2d").drawImage(video, 0, 0);
+        return canvas.toDataURL("image/jpeg", 0.8);
+      }
+
+      async function sendToVisionAPI(apiUrl, instruction, imageBase64URL) {
+        const res = await fetch(apiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            max_tokens: 70,
+            messages: [
+              {
+                role: "system",
+                content: [
+                  {
+                    type: "text",
+                    text: "You are a poetic and vivid storyteller guiding a blind person through what the camera sees. Describe the images like a flowing story, using rich adjectives, sensory details, and present continuous tense. Avoid guessing. Answer in 3-4 sentences only.",
+                  },
+                ],
+              },
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: instruction,
+                  },
+                  {
+                    type: "image_url",
+                    image_url: {
+                      url: imageBase64URL,
+                    },
+                  },
+                ],
+              },
+            ],
+          }),
+        });
+        if (!res.ok) throw new Error("Vision API failed: " + res.status);
+        const data = await res.json();
+        return data.choices[0].message.content;
+      }
+
+      async function sendToTTS(apiUrl, text) {
+        const formData = new FormData();
+        formData.append("text", text);
+
+        const res = await fetch(apiUrl, {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!res.ok) throw new Error("TTS API failed: " + res.status);
+
+        const blob = await res.blob();
+        const audioUrl = URL.createObjectURL(blob);
+        audioPlayer.src = audioUrl;
+        audioPlayer.play();
+
+        return new Promise((resolve) => {
+          const checkAndResolve = () => {
+            // Check if we should stop (user pressed stop button)
+            if (!isRunning) {
+              audioPlayer.pause();
+              audioPlayer.currentTime = 0;
+              resolve();
+              return;
+            }
+
+            // If audio ended naturally, resolve
+            if (audioPlayer.ended || audioPlayer.paused) {
+              resolve();
+              return;
+            }
+
+            // Check again in 100ms
+            setTimeout(checkAndResolve, 100);
+          };
+
+          // Start checking
+          audioPlayer.onended = () => resolve();
+          checkAndResolve();
+        });
+      }
+
+      async function loopCycle() {
+        if (!isRunning) return;
+
+        const visionUrl = visionApiInput.value.trim();
+        const ttsUrl = ttsApiInput.value.trim();
+
+        if (!visionUrl || !ttsUrl) {
+          updateStatus("Please enter both API URLs.");
+          return;
+        }
+
+        try {
+          updateStatus("Capturing image...");
+          const imageBase64 = captureImageBase64();
+
+          updateStatus("Sending to vision model...");
+          const instruction = instructionText.value;
+          const visionText = await sendToVisionAPI(
+            visionUrl,
+            instruction,
+            imageBase64
+          );
+
+          responseText.value = visionText;
+          updateStatus("Speaking...");
+
+          await sendToTTS(ttsUrl, visionText);
+
+          updateStatus("Cycle complete. Restarting...");
+        } catch (err) {
+          console.error("Error in cycle:", err);
+          responseText.value = "Error: " + err.message;
+          updateStatus("Error: " + err.message);
+        }
+
+        if (isRunning) {
+          setTimeout(loopCycle, 200);
+        }
+      }
+
+      startButton.addEventListener("click", () => {
+        if (!isRunning) {
+          isRunning = true;
+          instructionText.disabled = true;
+          visionApiInput.disabled = true;
+          ttsApiInput.disabled = true;
+          startButton.textContent = "Stop";
+          startButton.classList.remove("start");
+          startButton.classList.add("stop");
+          updateStatus("Starting...");
+          loopCycle();
+        } else {
+          isRunning = false;
+          // Audio will be stopped automatically by sendToTTS when it detects isRunning = false
+
+          instructionText.disabled = false;
+          visionApiInput.disabled = false;
+          ttsApiInput.disabled = false;
+          startButton.textContent = "Start";
+          startButton.classList.remove("stop");
+          startButton.classList.add("start");
+          updateStatus("Stopped.");
+        }
+      });
+
+      window.addEventListener("DOMContentLoaded", initCamera);
+      window.addEventListener("beforeunload", () => {
+        if (stream) stream.getTracks().forEach((track) => track.stop());
+      });
+    </script>
+  </body>
+</html>
